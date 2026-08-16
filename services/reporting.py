@@ -74,7 +74,6 @@ def get_summary():
 
 
 def get_latest_record():
-    """取最新一条上报记录，用于 idle_check。"""
     conn = get_conn()
     row = conn.execute("SELECT * FROM records ORDER BY id DESC LIMIT 1").fetchone()
     conn.close()
@@ -82,7 +81,6 @@ def get_latest_record():
 
 
 def get_daily_summary(date_str=None):
-    """某天（中国日期）活动总结，默认今天。"""
     now_cn = _now_cn()
     if date_str:
         try:
@@ -133,7 +131,6 @@ def get_daily_summary(date_str=None):
 
 
 def get_daily_reset():
-    """每日清零：中国日期，今日已累计时长 + 距次日清零倒计时。"""
     now_cn = _now_cn()
     today = datetime(now_cn.year, now_cn.month, now_cn.day)
     tomorrow = today + timedelta(days=1)
@@ -150,7 +147,6 @@ def get_daily_reset():
 
 
 def get_activity_trend(days=7):
-    """最近 N 天活动趋势（按中国日期聚合每日总时长）。"""
     now_cn = _now_cn()
     conn = get_conn()
     rows = conn.execute(
@@ -182,7 +178,6 @@ def get_activity_trend(days=7):
 
 
 def get_idle_status(hours):
-    """idle_check：检测最后一次上报距今是否超过指定小时。"""
     last = get_latest_record()
     if not last:
         return {"idle": False, "reason": "无任何上报记录"}

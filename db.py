@@ -25,7 +25,6 @@ def init_db():
         volume TEXT,
         steps TEXT,
         timestamp TEXT NOT NULL)""")
-    # 兼容旧表：加 steps 列
     try:
         conn.execute("ALTER TABLE records ADD COLUMN steps TEXT")
     except Exception:

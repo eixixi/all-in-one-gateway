@@ -35,7 +35,6 @@ class ReportBody(BaseModel):
     steps: str = ""
 
 
-# ===== 查岗上报 =====
 @app.post("/report")
 async def report(body: ReportBody, req: Request):
     auth = req.headers.get("Authorization", "")
@@ -60,7 +59,6 @@ async def health():
     return {"status": "ok", "version": "1.0.0"}
 
 
-# ===== Kelivo Gateway =====
 @app.get("/v1/models")
 async def models():
     return {"object": "list", "data": [{"id": cfg.MODEL_NAME, "object": "model", "created": 0, "owned_by": "gateway"}]}
@@ -98,7 +96,6 @@ async def chat_completions(req: Request):
     return resp.json()
 
 
-# ===== MCP端点 =====
 @app.post("/mcp")
 async def mcp(req: Request):
     body = await req.json()
@@ -121,7 +118,6 @@ async def mcp(req: Request):
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"未知方法: {method}"}}
 
 
-# ===== 手动触发唤醒（测试用） =====
 @app.post("/wake/run")
 async def wake_run():
     return await wake.run_wake_once()
