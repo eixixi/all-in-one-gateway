@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+from fastapi.responses import Response
 
 from config import cfg
 from services import reporting, timeline, wake
@@ -31,6 +32,7 @@ class ReportBody(BaseModel):
     device: str = ""
     brightness: str = ""
     volume: str = ""
+    steps: str = ""
 
 
 # ===== 查岗上报 =====
@@ -40,7 +42,7 @@ async def report(body: ReportBody, req: Request):
     if auth != f"Bearer {cfg.AUTH_TOKEN}":
         raise HTTPException(401, "Unauthorized")
     return reporting.add_record(body.app_name, body.event, body.battery, body.location,
-                                body.weather, body.device, body.brightness, body.volume)
+                                body.weather, body.device, body.brightness, body.volume, body.steps)
 
 
 @app.get("/ping")
@@ -74,16 +76,13 @@ async def chat_completions(req: Request):
     body = await req.json()
     kelivo_messages = body.get("messages", [])
 
-    # 更新时间线
     timeline.save_timeline(timeline.build_timeline(kelivo_messages))
 
-    # 注入特殊事件（唤醒/推送记录）
     llm_messages = list(kelivo_messages)
     for event in timeline.load_timeline():
         if timeline.is_special_event(event) and event not in llm_messages:
             llm_messages.append(event)
 
-    # 转发到上游
     if not cfg.TARGET_API_URL or not cfg.TARGET_API_KEY:
         raise HTTPException(500, "TARGET_API_URL / TARGET_API_KEY 未配置")
 
@@ -127,8 +126,6 @@ async def mcp(req: Request):
 async def wake_run():
     return await wake.run_wake_once()
 
-
-from fastapi.responses import Response
 
 if __name__ == "__main__":
     import uvicorn

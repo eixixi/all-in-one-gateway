@@ -13,7 +13,6 @@ def get_conn():
 
 def init_db():
     conn = get_conn()
-    # 查岗记录
     conn.execute("""CREATE TABLE IF NOT EXISTS records (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         app_name TEXT,
@@ -24,8 +23,13 @@ def init_db():
         device TEXT,
         brightness TEXT,
         volume TEXT,
+        steps TEXT,
         timestamp TEXT NOT NULL)""")
-    # 欲望账本（本地缓存，真源在GitHub远端）
+    # 兼容旧表：加 steps 列
+    try:
+        conn.execute("ALTER TABLE records ADD COLUMN steps TEXT")
+    except Exception:
+        pass
     conn.execute("""CREATE TABLE IF NOT EXISTS desires (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -47,7 +51,6 @@ def init_db():
         kind TEXT NOT NULL DEFAULT 'note',
         provenance TEXT,
         created_at TEXT NOT NULL)""")
-    # 心跳/唤醒流水账
     conn.execute("""CREATE TABLE IF NOT EXISTS heartbeat_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         triggered_at TEXT NOT NULL,
