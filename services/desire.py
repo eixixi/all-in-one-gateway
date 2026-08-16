@@ -32,7 +32,6 @@ def _save_remote(data):
     url = f"https://api.github.com/repos/{cfg.GH_REPO}/contents/{cfg.GH_DESIRES_FILE}"
     import base64
     content = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
-    # 先获取当前sha
     r = requests.get(url, headers={"Authorization": f"Bearer {cfg.GH_TOKEN}", "Accept": "application/vnd.github+json"})
     sha = r.json().get("sha") if r.status_code == 200 else None
     payload = {"message": "update desires", "content": content}
@@ -117,7 +116,6 @@ def desire_act(id, note="", done=False):
             if done:
                 entry["status"] = "done"
             entry["updated_at"] = now
-            # 记足迹
             conn = get_conn()
             conn.execute("INSERT INTO desire_notes (desire_id, note, kind, created_at) VALUES (?,?,?,?)",
                          (id, note or "碰了一下", "footprint", now))
@@ -129,26 +127,45 @@ def desire_act(id, note="", done=False):
     return {"status": "ok"}
 
 
-def desire_reflect(id, action, result=""):
+def desire_reflect(id, action, text="", track="", note="", days=0):
+    """照镜子处置一条欲望。
+    action: release放下 / rewrite改写(带text和track) / snooze歇几天(带days) / note留反思
+    """
     _sync_cache()
     remote = _load_remote()
     now = _now()
+    found = False
     for entry in remote:
         if entry["id"] == id:
+            found = True
             if action == "release":
                 entry["status"] = "released"
             elif action == "rewrite":
-                entry["text"] = result or entry["text"]
+                if text:
+                    entry["text"] = text
+                if track:
+                    entry["track"] = track
+                entry["status"] = "active"
+            elif action == "snooze":
+                days = int(days) if days else 3
+                entry["cooldown_until"] = (datetime.utcnow() + timedelta(days=days)).isoformat()
+                entry["status"] = "active"
+            elif action == "note":
+                pass  # 只留反思，不改变状态
+            else:
+                return {"error": f"未知action: {action}"}
             entry["updated_at"] = now
             conn = get_conn()
             conn.execute("INSERT INTO desire_notes (desire_id, note, kind, created_at) VALUES (?,?,?,?)",
-                         (id, result or action, "reflection", now))
+                         (id, note or text or action, "reflection", now))
             conn.commit()
             conn.close()
             break
+    if not found:
+        return {"error": "欲望不存在"}
     _save_remote(remote)
     _sync_cache()
-    return {"status": "ok"}
+    return {"status": "ok", "action": action, "id": id}
 
 
 def desire_history(id):
