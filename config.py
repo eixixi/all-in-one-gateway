@@ -23,6 +23,11 @@ class Config:
 
     TIME_ZONE = _b("TIME_ZONE", "Asia/Shanghai")
 
+    # 心潮动态状态引擎（Node.js独立运行，通过HTTP对接）
+    XINCHAO_URL = _b("XINCHAO_URL")
+    XINCHAO_TOKEN = _b("XINCHAO_TOKEN")
+    XINCHAO_TIMEOUT = int(_b("XINCHAO_TIMEOUT", "10"))
+
     GH_TOKEN = _b("GH_TOKEN")
     GH_REPO = _b("GH_REPO")
     GH_DESIRES_FILE = _b("GH_DESIRES_FILE", "desires.json")

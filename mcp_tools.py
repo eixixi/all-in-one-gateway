@@ -1,4 +1,4 @@
-from services import reporting, bark, desire, dm, thoughts, iphone_cmd
+from services import reporting, bark, desire, iphone_cmd, xinchao_client
 
 # MCP工具清单 + 分发
 TOOLS = [
@@ -11,7 +11,7 @@ TOOLS = [
     {"name": "desire_act", "description": "碰一下欲望，记足迹", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "note": {"type": "string"}, "done": {"type": "boolean"}}, "required": ["id"]}},
     {"name": "desire_reflect", "description": "照镜子：放下/改写/留反思", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "action": {"type": "string"}, "result": {"type": "string"}}, "required": ["id", "action"]}},
     {"name": "desire_history", "description": "翻一条欲望的完整足迹史", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
-    {"name": "check_my_mood", "description": "读DM动态状态+念头池（四维+闪念+执念）", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "check_my_mood", "description": "读心潮动态状态（十二维驱动力+念头池+疲惫+当前意图）", "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -50,5 +50,5 @@ FUNCS = {
     "desire_act": lambda **kw: desire.desire_act(kw.get("id", ""), kw.get("note", ""), kw.get("done", False)),
     "desire_reflect": lambda **kw: desire.desire_reflect(kw.get("id", ""), kw.get("action", ""), kw.get("result", "")),
     "desire_history": lambda **kw: desire.desire_history(kw.get("id", "")),
-    "check_my_mood": lambda **kw: {"dims": dm.get_mood(), "thoughts": thoughts.get_pool()},
+    "check_my_mood": lambda **kw: xinchao_client.client.get_intent(),
 }

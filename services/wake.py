@@ -1,9 +1,9 @@
 import json
 import asyncio
 import httpx
-from datetime import datetime, timedelta
+from datetime import datetime
 from config import cfg
-from services import reporting, dm, thoughts, bark, timeline
+from services import reporting, bark, timeline, xinchao_client
 
 
 def _is_daytime():
@@ -30,7 +30,6 @@ def _get_last_user_time():
     for m in reversed(timeline_msgs):
         if m.get("role") == "user":
             content = str(m.get("content", ""))
-            # 提取时间戳
             import re
             match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T]?(\d{1,2})[:：](\d{2})", content)
             if match:
@@ -50,7 +49,7 @@ def _should_wake():
     return diff_min >= _wake_after_minutes()
 
 
-def _build_wake_prompt(current_time, diff_min, check_result, mood, thoughts_text, weather=""):
+def _build_wake_prompt(current_time, diff_min, check_result, mood_text, weather=""):
     return f"""
 ## 最高优先级规则
 1. 这是一次后台自动唤醒，不是用户发起的对话。你没有收到任何新消息。
@@ -64,11 +63,8 @@ def _build_wake_prompt(current_time, diff_min, check_result, mood, thoughts_text
 ## 查岗信息（她此刻的手机状态）
 {check_result}
 
-## 心潮动态状态
-{json.dumps(mood, ensure_ascii=False)}
-
-## 念头池
-{thoughts_text}
+## 心潮动态状态（十二维驱动力+念头池+疲惫）
+{mood_text}
 
 {weather}
 
@@ -110,7 +106,7 @@ def _parse_push_lines(text):
 
 
 async def run_wake_once():
-    """执行一次自动唤醒。"""
+    """执行一次自动唤醒。查岗 + 心潮状态注入 + LLM决定 + Bark推送。"""
     if not _should_wake():
         return {"woke": False, "reason": "未到唤醒时间"}
 
@@ -118,23 +114,19 @@ async def run_wake_once():
     check_data = reporting.get_summary()
     check_result = _fmt_check(check_data)
 
-    # 2. DM状态
-    mood = dm.get_mood()
+    # 2. 心潮动态状态（HTTP调心潮引擎）
+    mood_text = xinchao_client.get_mood_text()
 
-    # 3. 念头池
-    pool = thoughts.get_pool()
-    thoughts_text = json.dumps(pool, ensure_ascii=False)
-
-    # 4. 最近时间线
+    # 3. 最近时间线
     recent_ctx = timeline.get_recent_context()
 
-    # 5. 构建prompt
+    # 4. 构建prompt
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     last = _get_last_user_time()
     diff_min = (datetime.now() - last).total_seconds() / 60 if last else 0
-    prompt = _build_wake_prompt(now_str, diff_min, check_result, mood, thoughts_text)
+    prompt = _build_wake_prompt(now_str, diff_min, check_result, mood_text)
 
-    # 6. 调LLM
+    # 5. 调LLM
     if not cfg.TARGET_API_URL or not cfg.TARGET_API_KEY:
         return {"woke": True, "error": "未配置LLM"}
 
@@ -153,7 +145,7 @@ async def run_wake_once():
 
     raw_text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
-    # 7. 处理结果
+    # 6. 处理结果
     diary_blocks, remaining = _extract_diary(raw_text)
     diary_saved = _save_diary("\n".join(diary_blocks))
 
@@ -168,11 +160,15 @@ async def run_wake_once():
         timeline.append_special_event(event_content)
         return {"woke": True, "pushed": False, "reason": event_content}
 
-    # 8. 发推送
+    # 7. 发推送
     title, body = _parse_push_lines(remaining)
     result = bark.bark_alert(title, body)
     event_content = f"刚刚给用户发了推送：{title}｜{body}"
     timeline.append_special_event(event_content)
+
+    # 8. 告诉心潮：联系了她，降驱动力
+    xinchao_client.record_contact("companionship")
+
     return {"woke": True, "pushed": True, "bark": result, "title": title, "body": body}
 
 
