@@ -15,7 +15,7 @@ TOOLS = [
     {"name": "desire_act", "description": "碰一下欲望，记一句足迹。碰的瞬间会回显来路，别把旧步重走一遍。done=True 表示你真做完了（亲手收针）。", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "note": {"type": "string"}, "done": {"type": "boolean"}}, "required": ["id"]}},
     {"name": "desire_reflect", "description": "照镜子处置一条欲望。action: release放下 / rewrite改写(可带新text和track) / snooze歇几天 / note留反思。欲望常不是做完而是转化——长成别的就rewrite，长出下一条就add+grew_from，该放就release。", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "action": {"type": "string"}, "text": {"type": "string"}, "track": {"type": "string"}, "note": {"type": "string"}, "days": {"type": "integer"}}, "required": ["id", "action"]}},
     {"name": "desire_history", "description": "看一条欲望的完整足迹时间线——它从哪来、怎么长到现在的。", "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
-    {"name": "check_my_mood", "description": "查看凌止此刻的心情：十二维驱动力、念头池、疲惫、当前意识状态", "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "check_my_mood", "description": "查看祁宴此刻的心情：十二维驱动力、念头池、疲惫、当前意识状态", "inputSchema": {"type": "object", "properties": {}}},
 ]
 
 
