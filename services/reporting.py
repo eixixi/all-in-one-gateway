@@ -52,6 +52,8 @@ def get_summary():
         ts_dt = datetime.fromisoformat(ts)
         if ts_dt < today_start_utc:
             continue
+        if not app:
+            continue
         if ev == "open":
             opens[app] = ts_dt
         elif ev == "close" and app in opens:
@@ -59,8 +61,22 @@ def get_summary():
             sessions[app] = sessions.get(app, 0) + gap
             del opens[app]
 
+    # 过滤空 app_name，去重保留顺序
+    seen = set()
+    recent_apps = []
+    for r in recent:
+        app = r[0]
+        if app and app not in seen:
+            recent_apps.append(app)
+            seen.add(app)
+
+    # 时间戳转北京时间
+    latest_ts_cn = ""
+    if latest_ts:
+        latest_ts_cn = (datetime.fromisoformat(latest_ts) + JST).strftime("%Y-%m-%d %H:%M:%S")
+
     return {
-        "recent_apps": [r[0] for r in recent],
+        "recent_apps": recent_apps,
         "sessions": sessions,
         "battery": latest_battery,
         "location": latest_location,
@@ -69,7 +85,7 @@ def get_summary():
         "brightness": latest_brightness,
         "volume": latest_volume,
         "steps": latest_steps,
-        "last_update": latest_ts
+        "last_update": latest_ts_cn
     }
 
 
