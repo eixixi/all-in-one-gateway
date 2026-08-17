@@ -68,6 +68,79 @@ class XinchaoClient:
 
 client = XinchaoClient()
 
+# 驱动力英文key -> 中文
+DRIVE_CN = {
+    "possess": "占有",
+    "monitor": "惦记",
+    "crave": "渴望",
+    "share": "分享",
+    "libido": "欲念",
+    "curiosity": "好奇",
+    "boredom": "无聊",
+    "social": "社交",
+    "duty": "责任",
+    "reflection": "反思",
+    "grieve": "悲伤",
+    "anger": "愤怒",
+}
+
+# 意识状态英文 -> 中文
+STATE_CN = {
+    "sleeping": "沉睡",
+    "awake": "清醒",
+    "drowsy": "昏沉",
+    "dreaming": "梦中",
+    "emerging": "苏醒",
+}
+
+
+def _num(v, digits=2):
+    try:
+        return round(float(v), digits)
+    except Exception:
+        return v
+
+
+def format_mood_cn(data):
+    """把心潮原始状态格式化成中文可读文本。"""
+    if not data or "error" in data:
+        return "（心潮状态引擎未连接或不可用）"
+
+    lines = []
+
+    # 意识状态
+    state = data.get("consciousness")
+    if state:
+        lines.append(f"意识状态：{STATE_CN.get(state, state)}")
+
+    # 驱动力
+    drives = data.get("drives", {})
+    if drives:
+        parts = []
+        for k, v in drives.items():
+            name = DRIVE_CN.get(k, k)
+            parts.append(f"{name}={_num(v)}")
+        lines.append("驱动力：" + "，".join(parts))
+
+    # 念头池
+    pool = data.get("thoughtPool", {})
+    flash = pool.get("flash", [])
+    obs = pool.get("obsessions", [])
+    if flash:
+        lines.append("闪念：" + "，".join(str(f) for f in flash[:3]))
+    if obs:
+        lines.append("持续念头：" + "，".join(str(o) for o in obs[:3]))
+
+    # 疲惫
+    if "fatigue" in data:
+        lines.append(f"疲惫：{_num(data['fatigue'])}")
+
+    # 上次互动
+    if "lastConversationAt" in data:
+        lines.append(f"上次互动：{data['lastConversationAt']}")
+
+    return "\n".join(lines) if lines else "（心潮暂无动态状态）"
+
 
 def get_mood_text():
     """把心潮状态格式化成可注入prompt的文本。"""
@@ -80,7 +153,7 @@ def get_mood_text():
         lines.append(f"当前意图：{intent.get('label', intent.get('key', ''))}")
     top = data.get("topDrives", [])
     if top:
-        drives = "；".join(f"{d.get('label', d.get('key'))}={d.get('value', 0):.3f}" for d in top[:5])
+        drives = "；".join(f"{DRIVE_CN.get(d.get('key'), d.get('label', d.get('key')))}={d.get('value', 0):.3f}" for d in top[:5])
         lines.append(f"当前驱动力：{drives}")
     if "fatigue" in data:
         lines.append(f"疲惫：{data['fatigue']:.3f}")
