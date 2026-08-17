@@ -1,13 +1,20 @@
 import json
 import asyncio
+import re
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from config import cfg
 from services import reporting, bark, timeline, xinchao_client
 
+CN_TZ = timezone(timedelta(hours=8))
+
+
+def _now_cn():
+    return datetime.now(CN_TZ)
+
 
 def _is_daytime():
-    hour = datetime.now().hour
+    hour = _now_cn().hour
     start, end = cfg.WAKE_DAY_START_HOUR, cfg.WAKE_DAY_END_HOUR
     if start == end:
         return True
@@ -25,17 +32,16 @@ def _check_interval_minutes():
 
 
 def _get_last_user_time():
-    """从时间线找最后一条真实用户消息时间。"""
+    """从时间线找最后一条真实用户消息时间（中国时区）。"""
     timeline_msgs = timeline.load_timeline()
     for m in reversed(timeline_msgs):
         if m.get("role") == "user":
             content = str(m.get("content", ""))
-            import re
             match = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T]?(\d{1,2})[:：](\d{2})", content)
             if match:
                 try:
                     y, mo, d, h, mi = map(int, match.groups())
-                    return datetime(y, mo, d, h, mi)
+                    return datetime(y, mo, d, h, mi, tzinfo=CN_TZ)
                 except Exception:
                     pass
     return None
@@ -45,8 +51,53 @@ def _should_wake():
     last = _get_last_user_time()
     if not last:
         return False
-    diff_min = (datetime.now() - last).total_seconds() / 60
+    diff_min = (_now_cn() - last).total_seconds() / 60
     return diff_min >= _wake_after_minutes()
+
+
+_WEATHER_CODE = {
+    0: "晴朗", 1: "大致晴朗", 2: "局部多云", 3: "阴天", 45: "有雾", 48: "雾凇",
+    51: "小毛毛雨", 53: "中等毛毛雨", 55: "较强毛毛雨", 61: "小雨", 63: "中雨", 65: "大雨",
+    71: "小雪", 73: "中雪", 75: "大雪", 80: "阵雨", 81: "较强阵雨", 82: "强阵雨",
+    95: "雷暴", 96: "雷暴伴小冰雹", 99: "雷暴伴大冰雹",
+}
+
+
+async def _fetch_weather():
+    if not cfg.WEATHER_ENABLED:
+        return ""
+    try:
+        lat, lon = float(cfg.WEATHER_LAT), float(cfg.WEATHER_LON)
+    except (TypeError, ValueError):
+        return ""
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat, "longitude": lon,
+        "current": "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m",
+        "daily": "sunrise,sunset", "timezone": "auto", "forecast_days": "1",
+        "temperature_unit": "celsius", "wind_speed_unit": "kmh",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        cur = data.get("current", {})
+        daily = data.get("daily", {})
+        code = _WEATHER_CODE.get(cur.get("weather_code"), f"代码{cur.get('weather_code')}")
+        lines = [
+            "## 天气信息",
+            f"- 位置：{cfg.WEATHER_LOCATION_NAME}",
+            f"- 当前：{code}，{cur.get('temperature_2m')}°C，体感 {cur.get('apparent_temperature')}°C",
+            f"- 湿度：{cur.get('relative_humidity_2m')}%",
+            f"- 降雨：{cur.get('precipitation')}mm",
+            f"- 风速：{cur.get('wind_speed_10m')}km/h",
+        ]
+        if daily.get("sunrise") and daily.get("sunset"):
+            lines.append(f"- 日出/日落：{daily['sunrise'][0]} / {daily['sunset'][0]}")
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 def _build_wake_prompt(current_time, diff_min, check_result, mood_text, weather=""):
@@ -76,7 +127,6 @@ def _build_wake_prompt(current_time, diff_min, check_result, mood_text, weather=
 
 
 def _extract_diary(text):
-    import re
     diary_blocks = re.findall(r"\[DIARY\]([\s\S]*?)\[/DIARY\]", text)
     remaining = re.sub(r"\[DIARY\][\s\S]*?\[/DIARY\]", "", text).strip()
     return diary_blocks, remaining
@@ -88,8 +138,9 @@ def _save_diary(content):
     from pathlib import Path
     diary_dir = Path(cfg.DIARY_DIR)
     diary_dir.mkdir(exist_ok=True)
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = _now_cn()
+    date_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%Y-%m-%d %H:%M")
     file = diary_dir / f"{date_str}.md"
     with open(file, "a", encoding="utf-8") as f:
         f.write(f"\n\n## {time_str}\n\n{content}\n")
@@ -97,36 +148,54 @@ def _save_diary(content):
 
 
 def _parse_push_lines(text):
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    """清洗推送内容：剥[BARK]标签、清标题/正文前缀、截断、标题保护。"""
+    t = text.strip()
+    bark_match = re.search(r"\[BARK\]([\s\S]*?)\[/BARK\]", t)
+    if bark_match:
+        t = bark_match[1].strip()
+    else:
+        t = re.sub(r"^\[BARK\]\s*", "", t)
+        t = re.sub(r"\s*\[/BARK\]$", "", t)
+    t = re.sub(r"^标题[：:]\s*", "", t, flags=re.M)
+    t = re.sub(r"^正文[：:]\s*", "", t, flags=re.M)
+
+    lines = [l.strip() for l in t.split("\n") if l.strip()]
+    if not lines:
+        return None, None
     if len(lines) == 1:
-        return "祁宴", lines[0]
-    elif len(lines) >= 2:
-        return lines[0], " ".join(lines[1:])
-    return "祁宴", text
+        title, body = "来自AI", lines[0]
+    elif len(lines) == 2:
+        title, body = lines[0], lines[1]
+    else:
+        title, body = lines[0], " ".join(lines[1:])
+
+    if len(body) > 500:
+        body = body[:497] + "..."
+    title = title or "来自伴侣"
+    if re.match(r"^\d", title):
+        title = "来自伴侣｜" + title
+    return title, body
 
 
 async def run_wake_once():
-    """执行一次自动唤醒。查岗 + 心潮状态注入 + LLM决定 + Bark推送。"""
+    """执行一次自动唤醒。查岗 + 天气 + 心潮状态注入 + LLM决定 + Bark推送。"""
     if not _should_wake():
         return {"woke": False, "reason": "未到唤醒时间"}
 
-    # 1. 查岗
     check_data = reporting.get_summary()
     check_result = _fmt_check(check_data)
 
-    # 2. 心潮动态状态（HTTP调心潮引擎）
+    weather = await _fetch_weather()
+
     mood_text = xinchao_client.get_mood_text()
 
-    # 3. 最近时间线
     recent_ctx = timeline.get_recent_context()
 
-    # 4. 构建prompt
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now_str = _now_cn().strftime("%Y-%m-%d %H:%M")
     last = _get_last_user_time()
-    diff_min = (datetime.now() - last).total_seconds() / 60 if last else 0
-    prompt = _build_wake_prompt(now_str, diff_min, check_result, mood_text)
+    diff_min = (_now_cn() - last).total_seconds() / 60 if last else 0
+    prompt = _build_wake_prompt(now_str, diff_min, check_result, mood_text, weather)
 
-    # 5. 调LLM
     if not cfg.TARGET_API_URL or not cfg.TARGET_API_KEY:
         return {"woke": True, "error": "未配置LLM"}
 
@@ -145,7 +214,6 @@ async def run_wake_once():
 
     raw_text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
-    # 6. 处理结果
     diary_blocks, remaining = _extract_diary(raw_text)
     diary_saved = _save_diary("\n".join(diary_blocks))
 
@@ -160,21 +228,25 @@ async def run_wake_once():
         timeline.append_special_event(event_content)
         return {"woke": True, "pushed": False, "reason": event_content}
 
-    # 7. 发推送
     title, body = _parse_push_lines(remaining)
+    if not title or not body:
+        event_content = "自动唤醒：本次未发送推送｜原因：推送内容为空"
+        timeline.append_special_event(event_content)
+        return {"woke": True, "pushed": False, "reason": event_content}
+
     result = bark.bark_alert(title, body)
-    event_content = f"刚刚给用户发了推送：{title}｜{body}"
+    if result.get("ok") or result.get("code") == 200:
+        event_content = f"自动唤醒：刚刚给用户发了Bark推送：{title}｜{body}"
+    else:
+        event_content = f"自动唤醒：本次未发送推送｜原因：Bark推送失败：{result}"
     timeline.append_special_event(event_content)
-
-    # 8. 告诉心潮：联系了她，降驱动力
-    xinchao_client.record_contact("companionship")
-
-    return {"woke": True, "pushed": True, "bark": result, "title": title, "body": body}
+    return {"woke": True, "pushed": True, "title": title, "body": body}
 
 
 def _fmt_check(data):
     lines = []
-    if data.get("last_update"): lines.append(f"采集时间：{data['last_update']}")
+    if data.get("last_update"):
+        lines.append(f"采集时间：{data['last_update']}")
     apps = data.get("recent_apps", [])
     lines.append(f"最近打开：{', '.join(apps)}" if apps else "暂无记录")
     ses = data.get("sessions", {})
@@ -182,16 +254,12 @@ def _fmt_check(data):
         for app, secs in sorted(ses.items(), key=lambda x: x[1], reverse=True):
             m, s = divmod(secs, 60)
             lines.append(f" {app}: {m}分{s}秒")
-    if data.get("battery"): lines.append(f"电量：{data['battery']}%")
-    if data.get("location"): lines.append(f"位置：{data['location']}")
+    if data.get("battery"):
+        lines.append(f"电量：{data['battery']}%")
+    if data.get("location"):
+        lines.append(f"位置：{data['location']}")
+    if data.get("weather"):
+        lines.append(f"天气：{data['weather']}")
+    if data.get("steps"):
+        lines.append(f"步数：{data['steps']}")
     return "\n".join(lines)
-
-
-async def wake_loop():
-    """后台唤醒循环。"""
-    while True:
-        try:
-            await run_wake_once()
-        except Exception as e:
-            print(f"[wake] 出错: {e}")
-        await asyncio.sleep(_check_interval_minutes() * 60)
