@@ -185,8 +185,11 @@ async def run_wake_once():
     """执行一次自动唤醒。查岗 + 天气 + 心潮状态注入 + LLM决定 + Bark推送。"""
     if not _should_wake():
         last = _get_last_user_time()
-        diff = (_now_cn() - last).total_seconds() / 60 if last else None
-        _log(f"检查唤醒：未到时间（距最后消息 {diff:.0f} 分钟，需 {_wake_after_minutes()} 分钟）")
+        if last:
+            diff = (_now_cn() - last).total_seconds() / 60
+            _log(f"检查唤醒：未到时间（距最后消息 {diff:.0f} 分钟，需 {_wake_after_minutes()} 分钟）")
+        else:
+            _log("检查唤醒：时间线无用户消息记录，暂不唤醒")
         return {"woke": False, "reason": "未到唤醒时间"}
 
     _log("触发唤醒：已超过静默时间，开始执行唤醒流程")
