@@ -9,6 +9,10 @@ from services import reporting, bark, timeline, xinchao_client
 CN_TZ = timezone(timedelta(hours=8))
 
 
+def _log(msg):
+    print(f"[{_now_cn().strftime('%Y-%m-%d %H:%M:%S')}] [wake] {msg}", flush=True)
+
+
 def _now_cn():
     return datetime.now(CN_TZ)
 
@@ -180,14 +184,22 @@ def _parse_push_lines(text):
 async def run_wake_once():
     """执行一次自动唤醒。查岗 + 天气 + 心潮状态注入 + LLM决定 + Bark推送。"""
     if not _should_wake():
+        last = _get_last_user_time()
+        diff = (_now_cn() - last).total_seconds() / 60 if last else None
+        _log(f"检查唤醒：未到时间（距最后消息 {diff:.0f} 分钟，需 {_wake_after_minutes()} 分钟）")
         return {"woke": False, "reason": "未到唤醒时间"}
+
+    _log("触发唤醒：已超过静默时间，开始执行唤醒流程")
 
     check_data = reporting.get_summary()
     check_result = _fmt_check(check_data)
+    _log("已获取查岗数据")
 
     weather = await _fetch_weather()
+    _log("已获取天气数据" if weather else "天气未启用或获取失败")
 
     mood_text = xinchao_client.get_mood_text()
+    _log("已获取心潮状态")
 
     recent_ctx = timeline.get_recent_context()
 
@@ -197,6 +209,7 @@ async def run_wake_once():
     prompt = _build_wake_prompt(now_str, diff_min, check_result, mood_text, weather)
 
     if not cfg.TARGET_API_URL or not cfg.TARGET_API_KEY:
+        _log("错误：未配置LLM，无法唤醒")
         return {"woke": True, "error": "未配置LLM"}
 
     messages = [
@@ -204,6 +217,7 @@ async def run_wake_once():
         {"role": "user", "content": f"以下是你与用户最近的聊天记录，仅供回忆。你现在处于后台自主唤醒状态。\n\n{recent_ctx}"},
     ]
 
+    _log("调用LLM决定是否联系用户...")
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             cfg.TARGET_API_URL,
@@ -213,32 +227,41 @@ async def run_wake_once():
         data = resp.json()
 
     raw_text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    _log(f"LLM返回：{raw_text[:200]}")
 
     diary_blocks, remaining = _extract_diary(raw_text)
     diary_saved = _save_diary("\n".join(diary_blocks))
+    if diary_blocks:
+        _log(f"已保存日记（{len(diary_blocks)}段）")
 
     if not remaining:
         event_content = f"自动唤醒：本次未发送推送｜原因：{'只写日记' if diary_saved else '模型空回复'}"
+        _log(event_content)
         timeline.append_special_event(event_content)
         return {"woke": True, "pushed": False, "reason": event_content}
 
     if remaining.startswith("[NO_ACTION]"):
         reason = remaining.replace("[NO_ACTION]", "").strip()[:20]
         event_content = f"自动唤醒：本次未发送推送｜原因：{reason}" if reason else "自动唤醒：本次未发送推送"
+        _log(event_content)
         timeline.append_special_event(event_content)
         return {"woke": True, "pushed": False, "reason": event_content}
 
     title, body = _parse_push_lines(remaining)
     if not title or not body:
         event_content = "自动唤醒：本次未发送推送｜原因：推送内容为空"
+        _log(event_content)
         timeline.append_special_event(event_content)
         return {"woke": True, "pushed": False, "reason": event_content}
 
+    _log(f"发送Bark推送：{title}｜{body[:100]}")
     result = bark.bark_alert(title, body)
     if result.get("ok") or result.get("code") == 200:
         event_content = f"自动唤醒：刚刚给用户发了Bark推送：{title}｜{body}"
+        _log("Bark推送成功")
     else:
         event_content = f"自动唤醒：本次未发送推送｜原因：Bark推送失败：{result}"
+        _log(f"Bark推送失败：{result}")
     timeline.append_special_event(event_content)
     return {"woke": True, "pushed": True, "title": title, "body": body}
 
@@ -267,9 +290,10 @@ def _fmt_check(data):
 
 async def wake_loop():
     """定时循环，按间隔执行自动唤醒。"""
+    _log(f"唤醒循环已启动，检查间隔 {_check_interval_minutes()} 分钟")
     while True:
         try:
             await run_wake_once()
         except Exception as e:
-            print("唤醒循环出错:", e)
+            _log(f"唤醒循环出错：{e}")
         await asyncio.sleep(_check_interval_minutes() * 60)
