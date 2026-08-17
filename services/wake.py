@@ -263,3 +263,13 @@ def _fmt_check(data):
     if data.get("steps"):
         lines.append(f"步数：{data['steps']}")
     return "\n".join(lines)
+
+
+async def wake_loop():
+    """定时循环，按间隔执行自动唤醒。"""
+    while True:
+        try:
+            await run_wake_once()
+        except Exception as e:
+            print("唤醒循环出错:", e)
+        await asyncio.sleep(_check_interval_minutes() * 60)
