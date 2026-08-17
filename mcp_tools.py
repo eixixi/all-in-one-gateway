@@ -66,5 +66,5 @@ FUNCS = {
     "desire_act": lambda **kw: desire.desire_act(kw.get("id", ""), kw.get("note", ""), kw.get("done", False)),
     "desire_reflect": lambda **kw: desire.desire_reflect(kw.get("id", ""), kw.get("action", ""), kw.get("text", ""), kw.get("track", ""), kw.get("note", ""), kw.get("days", 0)),
     "desire_history": lambda **kw: desire.desire_history(kw.get("id", "")),
-    "check_my_mood": lambda **kw: xinchao_client.client.get_state(),
+    "check_my_mood": lambda **kw: xinchao_client.format_mood_cn(xinchao_client.client.get_state()),
 }
